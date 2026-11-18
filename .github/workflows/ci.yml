@@ -1,42 +1,35 @@
 name: CI
-
 on:
   pull_request:
   push:
     branches: [main]
-
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
+      id-token: write
+    env:
+      IMAGE: us-west1-docker.pkg.dev/hello-devops-514902/hello-repo/hello-app:${{ github.sha }}
     steps:
-      - name: Get the code
-        uses: actions/checkout@v5
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-
-      - name: Install libraries
-        run: pip install -r requirements.txt
-
-      - name: Run tests
-        run: pytest
-
-      - name: Build Docker image
-        run: docker build -t ghcr.io/chetanyarlagadda/hello-app:${{ github.sha }} .
-
-      - name: Log in to GitHub Container Registry
+      - run: pip install -r requirements.txt
+      - run: pytest
+      - run: docker build -t $IMAGE .
+      - name: Auth to GCP (WIF)
         if: github.event_name == 'push'
-        uses: docker/login-action@v3
+        uses: google-github-actions/auth@v2
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
+          workload_identity_provider: projects/836041594773/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: github-deployer@hello-devops-514902.iam.gserviceaccount.com
       - name: Push image
         if: github.event_name == 'push'
-        run: docker push ghcr.io/chetanyarlagadda/hello-app:${{ github.sha }}
+        run: |
+          gcloud auth configure-docker us-west1-docker.pkg.dev --quiet
+          docker push $IMAGE
+      - name: Deploy to Cloud Run
+        if: github.event_name == 'push'
+        run: gcloud run deploy hello-app --image $IMAGE --region us-west1
